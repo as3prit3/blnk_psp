@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Marrakech Booking Payment</title>
+  </head>
+  <body>
+    <h1>Complete Your Payment</h1>
+
+    <!-- Payment form -->
+    <form id="payment-form">
+      <div id="unified-checkout"></div>
+      <button type="submit" id="pay-button">Pay Now</button>
+    </form>
+
+    <div id="payment-message"></div>
+
+    <!-- Load the Hyperswitch loader from CDN -->
+    <script src="http://localhost:9050/HyperLoader.js"></script>
+    <script>
+      let hyper;
+      let unifiedCheckout;
+      // let initialized = false;
+      let booking_id;
+
+      async function initialize() {
+        // if (initialized) return;
+        // initialized = true;
+        try {
+          const resp = await fetch("http://localhost:3000/create-booking", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ amount: 1400 }),
+          });
+
+          const data = await resp.json();
+          console.log("RESPONSE:", data);
+
+          const { bookingId, clientSecret } = data;
+          booking_id = bookingId;
+          hyper = Hyper("pk_snd_0182f58606ff4a15a29ad14743d61f4d");
+
+          const elements = hyper.elements({ clientSecret });
+
+          unifiedCheckout = elements.create("payment");
+          unifiedCheckout.mount("#unified-checkout");
+
+          document.getElementById("payment-form").dataset.bookingId = bookingId;
+
+        } catch (err) {
+          console.error("Initialization failed:", err);
+        }
+      }
+
+      async function handleSubmit(event) {
+        event.preventDefault();
+
+        const { error, status } = await hyper.confirmPayment({
+          elements: unifiedCheckout,
+          confirmParams: {
+            return_url: window.location.origin + "/webhook/hyperswitch",
+          },
+          redirect: "if_required",
+        });
+        
+        if (status === "succeeded") {
+          document.getElementById("payment-message").textContent = "Payment succeded";
+          // try {
+          //   const resp = await fetch("http://localhost:3000/webhook/hyperswitch", {
+          //     method: "POST",
+          //     headers: { "Content-Type": "application/json" },
+          //     body: JSON.stringify({ bookingId: booking_id, status }),
+          //   });
+
+          // } catch (err) {
+          //   console.error("Initialization failed:", err);
+          // }
+        }
+
+        if (error) {
+          document.getElementById("payment-message").textContent =
+            error.message || "Payment failed. Please try again.";
+        }
+      }
+
+      document
+        .getElementById("payment-form")
+        .addEventListener("submit", handleSubmit);
+
+      initialize();
+    </script>
+  </body>
+</html>

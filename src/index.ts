@@ -4,8 +4,9 @@ import { bootstrap } from "./ledger";
 import Fastify from "fastify";
 import dotenv from "dotenv";
 import db from "./db";
-import axios from 'axios';
 import fastifyCors from '@fastify/cors';
+import fastifyStatic from "@fastify/static";
+import path from "path";
 
 type BulkInflightResponse = {
   status: number;
@@ -18,7 +19,7 @@ type BulkInflightResponse = {
 };
 
 const blnk = BlnkInit('test_admin', { baseUrl: 'http://localhost:5001' });
-const { Ledgers, LedgerBalances, Transactions, Search } = blnk;
+const { Ledgers, LedgerBalances, Transactions } = blnk;
 
 export { Ledgers, LedgerBalances, Transactions };
 
@@ -30,6 +31,10 @@ app.register(fastifyCors, {
   origin: "http://127.0.0.1:5500",
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type"],
+});
+
+app.register(fastifyStatic, {
+  root: path.join(__dirname, "../public"),
 });
 
 interface Booking {
@@ -46,126 +51,144 @@ async function start() {
   // startPayoutWorker(balances);
   // 1️⃣ Create booking
   app.post("/create-booking", async (req, reply) => {
+    try {
     const bookingId = `booking_${Date.now()}`;
     const { amount } = req.body as { amount: number };
 
     db.prepare(`
-        INSERT INTO bookings (id, amount, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+      INSERT INTO bookings (id, amount, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
     `).run(
-        bookingId,
-        amount,
-        "CREATED",
-        new Date().toISOString(),
-        new Date().toISOString()
-    );
-
-    const hsResp = await axios.post(
-      `http://localhost:8080/payments`,
-      {
-        amount: amount * 1,        // Hyperswitch expects smallest currency unit (e.g., cents)
-        currency: "MAD",
-        metadata: { booking_id: bookingId }
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "api-key": "snd_9yoRd0ubzYQRDKNSts54WY2BgP7QNtKlNmMVpUzlLt8BwM2qMMUsOyQygH9QL3vo"!
-        }
-      }
-    );
-
-    console.log(hsResp)
-
-    const { payment_id, client_secret } = hsResp.data;
-
-    db.prepare(`
-      UPDATE bookings
-      SET hyperswitch_payment_id = ?, hyperswitch_client_secret = ?, updated_at = ?
-      WHERE id = ?
-    `).run(payment_id, client_secret, new Date().toISOString(), bookingId);
-
-    const booking = db.prepare(`
-      SELECT * FROM bookings WHERE id = ?
-    `).get(bookingId) as Booking;
-
-    // 1) Do ledger pay in
-    await Transactions.create({
-      amount: booking.amount,
-      precision: 1,
-      currency: "MAD",
-      source: "@World",
-      destinations: [
-        { identifier: "@EscrowPool", distribution: "left" },
-        { identifier: "@PlatformFees", distribution: "20%" }
-      ],
-      reference: `${bookingId}_payin`,
-      allow_overdraft: true,
-      description: `Pay-in for booking ${bookingId}`
-    });
-
-    // 2) Mint client token balance
-    await Transactions.create({
-      amount: booking.amount,
-      precision: 1,
-      currency: "POINTS",
-      source: "@TokenPool",
-      destination: balances.clientBalanceId,
-      reference: `${bookingId}_client_topup`,
-      description: `Token top-up for booking ${bookingId}`
-    });
-
-    return reply.send({
       bookingId,
-      clientSecret: client_secret,
-    });
+      amount,
+      "CREATED",
+      new Date().toISOString(),
+      new Date().toISOString()
+    );
 
+    const response = await fetch("https://sandbox.hyperswitch.io/payments", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "api-key": "snd_rnAVo1BZFBD4wrknW57RequJOMvERcDM3UWHYCJjgM5uIbQRzAT8oRRgYG6lAn2Q",
+      },
+      body: JSON.stringify({
+          amount: amount * 100,
+          currency: "MAD",
+          confirm: false,
+          profile_id: "pro_iSspbTAvC6UYfIogBViN",
+          metadata: {
+            bookingId: bookingId,
+          }
+        }),
+      });
+
+      const text = await response.text();
+      console.log("RAW RESPONSE FROM HYPERSWITCH:", text);
+
+      if (!response.ok) {
+        throw new Error("Payment creation failed");
+      }
+
+      const data = JSON.parse(text);
+
+      db.prepare(`
+        UPDATE bookings
+        SET hyperswitch_payment_id = ?, hyperswitch_client_secret = ?, updated_at = ?
+        WHERE id = ?
+      `).run(data.payment_id, data.client_secret, new Date().toISOString(), bookingId);
+
+      const booking = db.prepare(`
+        SELECT * FROM bookings WHERE id = ?
+      `).get(bookingId) as Booking;
+
+      // 1) Do ledger pay in
+      await Transactions.create({
+        amount: booking.amount,
+        precision: 1,
+        currency: "MAD",
+        source: "@World",
+        destinations: [
+          { identifier: "@EscrowPool", distribution: "left" },
+          { identifier: "@PlatformFees", distribution: "20%" }
+        ],
+        reference: `${bookingId}_payin`,
+        allow_overdraft: true,
+        description: `Split the incoming payment for ${bookingId} between EscrowPool and PlatformFees`
+      });
+
+      // 2) Mint client token balance
+      await Transactions.create({
+        amount: booking.amount,
+        precision: 1,
+        currency: "POINTS",
+        source: "@TokenPool",
+        destination: balances.clientBalanceId,
+        reference: `${bookingId}_client_topup`,
+        description: `Topup client balance with points for ${bookingId}`,
+        allow_overdraft: true
+      });
+
+      return reply.send({
+        bookingId,
+        clientSecret: data.client_secret
+      });
+
+    } catch (err) {
+      console.error("CREATE BOOKING ERROR:", err);
+      return reply.status(500).send({
+        error: "Internal Server Error",
+      });
+    }
+
+
+    //---------------------------------------------------------------------
 
     // const booking = db.prepare(`
     //     SELECT * FROM bookings WHERE id = ?
     // `).get(bookingId) as Booking;
 
     // 🔵 Step A: Topup wallet
-    await Transactions.create({
-      amount: booking.amount,
-      precision: 1,
-      currency: "MAD",
-      source: "@World",
-      destinations: [
-        {
-            identifier: "@EscrowPool",
-            distribution: "left",
-        },
-        {
-            identifier: "@PlatformFees",
-            distribution: "20%",
-        }
-      ],
-      reference: `${bookingId}_EscrowPool_amount`,
-      allow_overdraft: true,
-      description: `Split the incoming payment for ${bookingId} between EscrowPool and PlatformFees`,
-    });
+  //   await Transactions.create({
+  //     amount: booking.amount,
+  //     precision: 1,
+  //     currency: "MAD",
+  //     source: "@World",
+  //     destinations: [
+  //       {
+  //           identifier: "@EscrowPool",
+  //           distribution: "left",
+  //       },
+  //       {
+  //           identifier: "@PlatformFees",
+  //           distribution: "20%",
+  //       }
+  //     ],
+  //     reference: `${bookingId}_EscrowPool_amount`,
+  //     allow_overdraft: true,
+  //     description: `Split the incoming payment for ${bookingId} between EscrowPool and PlatformFees`,
+  //   });
 
-    await Transactions.create({
-      amount: booking.amount,
-      precision: 1,
-      currency: "POINTS",
-      source: "@TokenPool",
-      destination: balances.clientBalanceId,
-      reference: `${bookingId}_client_topup`,
-      description: `Topup client balance with points for ${bookingId}`,
-      allow_overdraft: true,
-    });
+  //   await Transactions.create({
+  //     amount: booking.amount,
+  //     precision: 1,
+  //     currency: "POINTS",
+  //     source: "@TokenPool",
+  //     destination: balances.clientBalanceId,
+  //     reference: `${bookingId}_client_topup`,
+  //     description: `Topup client balance with points for ${bookingId}`,
+  //     allow_overdraft: true,
+  //   });
 
-    return { bookingId, status: "CREATED", amount };
+  //   return { bookingId, status: "CREATED", amount };
   });
 
 
   app.post("/webhook/hyperswitch", async (req, reply) => {
     const event = req.body as any;
-    console.log("Web hook /webhook/hyperswitch reached: ",event)
+    console.log("========WEB HOOK /webhook/hyperswitch reached: ",event)
     // Only handle success
-    if (event.type === "payment.succeeded") {
+    if (event.status === "succeeded") {
       const bookingId = event.bookingId;
 
       const booking = db.prepare(`
