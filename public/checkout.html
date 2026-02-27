@@ -3,13 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <title>Marrakech Booking Payment</title>
+    <link rel="stylesheet" href="style.css">
   </head>
   <body>
-    <h1>Complete Your Payment</h1>
-
     <!-- Payment form -->
-    <form id="payment-form">
-      <div id="unified-checkout"></div>
+    <form class="checkout-card" id="checkout-card">
+      <h1>Complete Your Payment</h1>
+      <div id="payment-element"></div>
       <button type="submit" id="pay-button">Pay Now</button>
     </form>
 
@@ -20,12 +20,8 @@
     <script>
       let hyper;
       let unifiedCheckout;
-      // let initialized = false;
-      let booking_id;
 
       async function initialize() {
-        // if (initialized) return;
-        // initialized = true;
         try {
           const resp = await fetch("http://localhost:3000/create-booking", {
             method: "POST",
@@ -37,15 +33,14 @@
           console.log("RESPONSE:", data);
 
           const { bookingId, clientSecret } = data;
-          booking_id = bookingId;
-          hyper = Hyper("pk_snd_0182f58606ff4a15a29ad14743d61f4d");
+          hyper = Hyper("pk_snd_d12b2e3fde784c5886f0f3038f57a3e5");
 
           const elements = hyper.elements({ clientSecret });
 
           unifiedCheckout = elements.create("payment");
-          unifiedCheckout.mount("#unified-checkout");
+          unifiedCheckout.mount("#payment-element");
 
-          document.getElementById("payment-form").dataset.bookingId = bookingId;
+          document.getElementById("checkout-card").dataset.bookingId = bookingId;
 
         } catch (err) {
           console.error("Initialization failed:", err);
@@ -54,29 +49,15 @@
 
       async function handleSubmit(event) {
         event.preventDefault();
-
+        console.log("LOOOCATION: ", window.location.origin)
         const { error, status } = await hyper.confirmPayment({
           elements: unifiedCheckout,
           confirmParams: {
-            return_url: window.location.origin + "/webhook/hyperswitch",
+            return_url: window.location.origin + "/payment-complete.html",
           },
-          redirect: "if_required",
+          redirect: "always",
         });
         
-        if (status === "succeeded") {
-          document.getElementById("payment-message").textContent = "Payment succeded";
-          // try {
-          //   const resp = await fetch("http://localhost:3000/webhook/hyperswitch", {
-          //     method: "POST",
-          //     headers: { "Content-Type": "application/json" },
-          //     body: JSON.stringify({ bookingId: booking_id, status }),
-          //   });
-
-          // } catch (err) {
-          //   console.error("Initialization failed:", err);
-          // }
-        }
-
         if (error) {
           document.getElementById("payment-message").textContent =
             error.message || "Payment failed. Please try again.";
@@ -84,7 +65,7 @@
       }
 
       document
-        .getElementById("payment-form")
+        .getElementById("checkout-card")
         .addEventListener("submit", handleSubmit);
 
       initialize();

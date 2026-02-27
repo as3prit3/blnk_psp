@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <h1>Payment Processing...</h1>
+    <script>
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get("status");
+
+    if (status === "succeeded") {
+        document.body.innerHTML = "<h1>Payment Successful ✅</h1>";
+    } else {
+        document.body.innerHTML = "<h1>Payment Failed ❌</h1>";
+    }
+    </script>
+</body>
+</html>
