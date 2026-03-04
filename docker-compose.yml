@@ -19,7 +19,8 @@ services:
       - PORT=3000
       - DATABASE_URL=postgresql://booking_user:booking_pass@bk_postgres:5432/booking_db
       - BLNK_API_URL=http://server:5001
-      # - HYPERSWITCH_WEBHOOK_SECRET=${HYPERSWITCH_WEBHOOK_SECRET}
+    env_file:
+    - ./backend/.env
     depends_on:
       bk_postgres:
         condition: service_healthy
@@ -200,7 +201,7 @@ services:
     volumes:
       - ./hyperswitch:/app
     environment:
-      - DATABASE_URL=postgresql://hs_user:hs_pass@hs_postgres:5432/hyperswitch_db
+      - DATABASE_URL=postgresql://db_user:hs_pass@db_postgres:5432/hyperswitch_db
     depends_on:
       hs_postgres:
         condition: service_healthy
@@ -231,8 +232,8 @@ services:
     networks:
       - app_net
     environment:
-      - POSTGRES_USER=hs_user
-      - POSTGRES_PASSWORD=hs_pass
+      - POSTGRES_USER=db_user
+      - POSTGRES_PASSWORD=db_pass
       - POSTGRES_DB=hyperswitch_db
     volumes:
       - hs_postgres_data:/var/lib/postgresql/data

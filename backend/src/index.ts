@@ -15,6 +15,7 @@ type BulkInflightResponse = {
     transaction_count: number;
   };
 };
+console.log("API KEEEY=== ", process.env.SEC_API_KEY)
 
 const blnk = BlnkInit(process.env.SEC_API_KEY as string, { baseUrl: 'http://server:5001' });
 const { Ledgers, LedgerBalances, Transactions } = blnk;
