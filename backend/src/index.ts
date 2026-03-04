@@ -1,4 +1,3 @@
-//how can i use github:blnkfinance/blnk-ts as the import so i can use the createBulk function
 import { BlnkInit } from '@blnkfinance/blnk-typescript';
 import { bootstrap } from "./ledger";
 import Fastify from "fastify";
@@ -17,7 +16,7 @@ type BulkInflightResponse = {
   };
 };
 
-const blnk = BlnkInit('test_admin', { baseUrl: 'http://localhost:5001' });
+const blnk = BlnkInit(process.env.SEC_API_KEY as string, { baseUrl: 'http://server:5001' });
 const { Ledgers, LedgerBalances, Transactions } = blnk;
 
 export { Ledgers, LedgerBalances, Transactions };
@@ -39,8 +38,12 @@ interface Booking {
 let balances: any;
 
 async function start() {
-  balances = await bootstrap();
-
+  if (process.env.RUN_BOOTSTRAP === "true") {
+    console.log("🚀 Running bootstrap...");
+    balances = await bootstrap();
+  } else {
+    console.log("♻️ Skipping bootstrap");
+  }
   // 1️⃣ Create booking
   app.post("/create-booking", async (req, reply) => {
     const { amount, user_id, host_id } = req.body as {
@@ -67,11 +70,11 @@ async function start() {
       const bookingId = bookingResult.rows[0].id;
 
       // Create Hyperswitch payment
-      const response = await fetch("http://localhost:8080/payments", {
+      const response = await fetch("http://hyperswitch-server:8080/payments", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "api-key": "snd_sKCelJbWIO9OAzro0QX4khHffncVgGWKCLis5V2wy0iEsDQEJi7d5YqPFI2p7YKd",
+          "api-key": process.env.HS_SND_API_KEY as string,
         },
         body: JSON.stringify({
           amount: amount * 100,

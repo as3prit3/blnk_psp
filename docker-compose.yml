@@ -1,0 +1,309 @@
+services:
+
+  # ─────────────────────────────────────────
+  # YOUR BACKEND
+  # ─────────────────────────────────────────
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend
+    restart: unless-stopped
+    networks:
+      - app_net
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=postgresql://booking_user:booking_pass@bk_postgres:5432/booking_db
+      - BLNK_API_URL=http://server:5001
+      # - HYPERSWITCH_WEBHOOK_SECRET=${HYPERSWITCH_WEBHOOK_SECRET}
+    depends_on:
+      bk_postgres:
+        condition: service_healthy
+
+  bk_postgres:
+    image: postgres:16
+    container_name: bk_postgres
+    restart: always
+    networks:
+      - app_net
+    environment:
+      - POSTGRES_USER=booking_user
+      - POSTGRES_PASSWORD=booking_pass
+      - POSTGRES_DB=booking_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - bk_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U booking_user -d booking_db"]
+      interval: 5s
+      retries: 5
+      start_period: 5s
+      timeout: 5s
+      
+
+  # ─────────────────────────────────────────
+  # BLNK
+  # ─────────────────────────────────────────
+
+  server:
+    image: ${BLNK_IMAGE:-jerryenebeli/blnk:latest}
+    container_name: server
+    restart: on-failure
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "blnk migrate up && blnk start"
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      TYPESENSE_URL: http://typesense:8108
+    ports:
+      - "5001:5001"
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - redis
+      - postgres
+      - jaeger
+    volumes:
+      - ./BLNK/blnk.json:/blnk.json
+    networks:
+      - app_net
+
+  worker:
+    image: ${BLNK_IMAGE:-jerryenebeli/blnk:latest}
+    container_name: worker
+    restart: on-failure
+    entrypoint: ["blnk", "workers"]
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+    ports:
+      - "5004:5004"
+    depends_on:
+      - redis
+      - postgres
+      - jaeger
+    volumes:
+      - ./BLNK/blnk.json:/blnk.json
+    networks:
+      - app_net
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    networks:
+      - app_net
+
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16}
+    container_name: ${POSTGRES_CONTAINER:-postgres}
+    restart: on-failure
+    ports:
+      - "${POSTGRES_OUTER_PORT:-5433}:5432"
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-blnk}
+    volumes:
+      - blnk_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_net
+
+  typesense:
+    image: typesense/typesense:30.2.rc1
+    container_name: typesense
+    command:
+      ["--data-dir", "/data", "--api-key=blnk-api-key", "--listen-port", "8108"]
+    volumes:
+      - typesense_data:/data
+    logging:
+      driver: "none"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8108/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - app_net
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:16686"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - app_net
+
+
+  # ─────────────────────────────────────────
+  # HYPERSWITCH
+  # ─────────────────────────────────────────
+
+  hyperswitch-server:
+    image: docker.juspay.io/juspaydotin/hyperswitch-router:latest
+    pull_policy: always
+    container_name: hyperswitch-server
+    restart: unless-stopped
+    command: /local/bin/router -f /local/config/docker_compose.toml
+    networks:
+      - app_net
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./hyperswitch/config:/local/config
+    depends_on:
+      hs_postgres:
+        condition: service_healthy
+      hs_redis:
+        condition: service_healthy
+      hs_migration_runner:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/health || exit 1"]
+      interval: 5s
+      retries: 5
+      start_period: 10s
+      timeout: 5s
+
+  hs_migration_runner:
+    image: docker.io/debian:trixie-slim
+    pull_policy: always
+    container_name: hs_migration_runner
+    networks:
+      - app_net
+    working_dir: /app
+    command: >
+      bash -c "
+      apt-get update && apt-get install -y curl xz-utils just &&
+      curl --proto '=https' --tlsv1.2 -LsSf https://github.com/diesel-rs/diesel/releases/download/v2.3.5/diesel_cli-installer.sh | bash &&
+      export PATH=\"/root/.cargo/bin:$${PATH}\" &&
+      just migrate"
+    volumes:
+      - ./hyperswitch:/app
+    environment:
+      - DATABASE_URL=postgresql://hs_user:hs_pass@hs_postgres:5432/hyperswitch_db
+    depends_on:
+      hs_postgres:
+        condition: service_healthy
+
+  # hs_migration_runner:
+  #   image: rust:latest
+  #   container_name: hs_migration_runner
+  #   networks:
+  #     - app_net
+  #   working_dir: /app
+  #   command: >
+  #     bash -c "
+  #     curl -fsSL https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash &&
+  #     cargo binstall diesel_cli just --no-confirm &&
+  #     just migrate"
+  #   volumes:
+  #     - ./hyperswitch:/app
+  #   environment:
+  #     - DATABASE_URL=postgresql://hs_user:hs_pass@hs_postgres:5432/hyperswitch_db
+  #   depends_on:
+  #     hs_postgres:
+  #       condition: service_healthy
+
+  hs_postgres:
+    image: postgres:16
+    container_name: hs_postgres
+    restart: always
+    networks:
+      - app_net
+    environment:
+      - POSTGRES_USER=hs_user
+      - POSTGRES_PASSWORD=hs_pass
+      - POSTGRES_DB=hyperswitch_db
+    volumes:
+      - hs_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 5s
+      retries: 5
+      start_period: 5s
+      timeout: 5s
+
+  hs_redis:
+    image: redis:7
+    container_name: hs_redis
+    restart: unless-stopped
+    networks:
+      - app_net
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep '^PONG$'"]
+      interval: 5s
+      retries: 3
+      start_period: 5s
+      timeout: 5s
+
+  # ─────────────────────────────────────────
+  # HYPERSWITCH WEB SDK (frontend)
+  # ─────────────────────────────────────────
+
+  hyperswitch-web:
+    image: docker.juspay.io/juspaydotin/hyperswitch-web:latest
+    pull_policy: always
+    container_name: hyperswitch-web
+    restart: unless-stopped
+    networks:
+      - app_net
+    ports:
+      - "9050:9050"
+    environment:
+      - ENABLE_LOGGING=true
+      - SDK_ENV=sandbox
+      - ENV_BACKEND_URL=http://hyperswitch-server:8080
+    depends_on:
+      hyperswitch-server:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────
+  # HYPERSWITCH CONTROL CENTER
+  # ─────────────────────────────────────────
+
+  hyperswitch-control-center:
+    image: docker.juspay.io/juspaydotin/hyperswitch-control-center:latest
+    pull_policy: always
+    container_name: hyperswitch-control-center
+    restart: unless-stopped
+    networks:
+      - app_net
+    ports:
+      - "9000:9000"
+    environment:
+      - configPath=/tmp/dashboard-config.toml
+    volumes:
+      - ./hyperswitch/config/dashboard.toml:/tmp/dashboard-config.toml
+    depends_on:
+      hyperswitch-server:
+        condition: service_healthy
+
+networks:
+  app_net:
+    driver: bridge
+
+volumes:
+  bk_postgres_data:
+  blnk_postgres_data:
+  hs_postgres_data:
+  typesense_data:

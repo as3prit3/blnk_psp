@@ -3,16 +3,16 @@ import { Pool } from "pg";
 
 export const pool = new Pool({
   user: process.env.DB_USER || "booking_user",
-  host: process.env.DB_HOST || "localhost",
+  host: process.env.DB_HOST || "bk_postgres",
   database: process.env.DB_NAME || "booking_db",
   password: process.env.DB_PASSWORD || "booking_pass",
-  port: Number(process.env.DB_PORT) || 5434,
+  port: Number(process.env.DB_PORT) || 5432,
 });
 
 export async function initDB() {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    // await client.query("BEGIN");
 
     // Enable UUID
     await client.query(`

@@ -11,7 +11,8 @@ interface BootstrapData {
 }
 
 export async function bootstrap(): Promise<BootstrapData> {
-  // If file exists → reuse
+  // If file exists → reus
+
   if (fs.existsSync(BOOTSTRAP_PATH)) {
     const raw = fs.readFileSync(BOOTSTRAP_PATH, "utf-8");
     console.log("♻️ Reusing existing ledger setup");

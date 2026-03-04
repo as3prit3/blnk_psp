@@ -18,12 +18,14 @@
     <!-- Load the Hyperswitch loader from CDN -->
     <script src="http://localhost:9050/HyperLoader.js"></script>
     <script>
+      import dotenv from "dotenv";
+ 
       let hyper;
       let unifiedCheckout;
 
       async function initialize() {
         try {
-          const resp = await fetch("http://localhost:3000/create-booking", {
+          const resp = await fetch("http://backend:3000/create-booking", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -37,7 +39,7 @@
           console.log("RESPONSE:", data);
 
           const { bookingId, clientSecret } = data;
-          hyper = Hyper("pk_snd_d12b2e3fde784c5886f0f3038f57a3e5");
+          hyper = Hyper(process.env.HS_PNK_API_KEY);
 
           const elements = hyper.elements({ clientSecret });
 

@@ -20,8 +20,6 @@ services:
       - jaeger
     volumes:
       - ./blnk.json:/blnk.json
-    networks:
-      - shared
 
   worker:
     image: ${BLNK_IMAGE:-jerryenebeli/blnk:latest}
@@ -38,14 +36,10 @@ services:
       - jaeger
     volumes:
       - ./blnk.json:/blnk.json
-    networks:
-      - shared
 
   redis:
     image: redis:latest
     container_name: redis
-    networks:
-      - shared
 
   postgres:
     image: ${POSTGRES_IMAGE:-postgres:16}
@@ -65,8 +59,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - shared
 
   typesense:
     image: typesense/typesense:30.2.rc1
@@ -82,8 +74,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-    networks:
-      - shared
 
   jaeger:
     image: jaegertracing/all-in-one:latest
@@ -99,8 +89,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
-    networks:
-      - shared
 
   bk_postgres:
     image: postgres:16
@@ -119,8 +107,3 @@ volumes:
   pg_data:
   postgres_data:
   typesense_data:
-
-networks:
-  shared:
-    external: true
-    name: blnk_hs_shared
