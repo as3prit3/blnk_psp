@@ -1,0 +1,8 @@
+{
+  "extends": "./node_modules/gts/",
+  "rules": {
+    "quotes": ["error", "backtick"], // Enforce backticks for strings
+    "semi": ["error", "always"], // Enforce semicolons at the end of statements
+    "no-var": "error" // Disallow `var` (prefer `let` or `const`)
+  }
+}

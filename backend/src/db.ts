@@ -45,8 +45,17 @@ export async function initDB() {
         currency VARCHAR(10) NOT NULL,
         status VARCHAR(50) NOT NULL,
         raw_response JSONB,
+        blnk_payin_tx_id VARCHAR(255),
+        blnk_topup_tx_id VARCHAR(255),
         created_at TIMESTAMP DEFAULT NOW()
       );
+    `);
+
+    // ✅ Add blnk tx id columns if upgrading an existing DB
+    await client.query(`
+      ALTER TABLE payments
+        ADD COLUMN IF NOT EXISTS blnk_payin_tx_id VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS blnk_topup_tx_id VARCHAR(255);
     `);
 
     // WEBHOOK EVENTS

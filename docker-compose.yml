@@ -12,13 +12,15 @@ services:
     restart: unless-stopped
     networks:
       - app_net
-    ports:
-      - "3000:3000"
+      - shared_net
+    # ports:
+    #   - "3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
       - DATABASE_URL=postgresql://booking_user:booking_pass@bk_postgres:5432/booking_db
       - BLNK_API_URL=http://server:5001
+      - HYPERSWITCH_API_URL=http://hyperswitch-server-1:8080
     env_file:
     - ./backend/.env
     depends_on:
@@ -45,7 +47,7 @@ services:
       retries: 5
       start_period: 5s
       timeout: 5s
-      
+
 
   # ─────────────────────────────────────────
   # BLNK
@@ -74,6 +76,7 @@ services:
       - ./BLNK/blnk.json:/blnk.json
     networks:
       - app_net
+      - shared_net
 
   worker:
     image: ${BLNK_IMAGE:-jerryenebeli/blnk:latest}
@@ -154,57 +157,79 @@ services:
     networks:
       - app_net
 
-
+  # ─────────────────────────────────────────
+  # NGINX
+  # ─────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    restart: unless-stopped
+    networks:
+      - app_net
+      - shared_net
+    ports:
+      # - "80:80"       # HTTP → redirects to HTTPS
+      - "3443:443"     # Backend
+      - "8443:8443"   # Hyperswitch
+      - "5443:5443"   # Blnk
+      - "9443:9443"   # Control Center
+      - "9450:9450"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - backend
+      - server
   # ─────────────────────────────────────────
   # HYPERSWITCH
   # ─────────────────────────────────────────
 
-  hyperswitch-server:
-    image: docker.juspay.io/juspaydotin/hyperswitch-router:latest
-    pull_policy: always
-    container_name: hyperswitch-server
-    restart: unless-stopped
-    command: /local/bin/router -f /local/config/docker_compose.toml
-    networks:
-      - app_net
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./hyperswitch/config:/local/config
-    depends_on:
-      hs_postgres:
-        condition: service_healthy
-      hs_redis:
-        condition: service_healthy
-      hs_migration_runner:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD-SHELL", "curl --fail http://localhost:8080/health || exit 1"]
-      interval: 5s
-      retries: 5
-      start_period: 10s
-      timeout: 5s
+  # hyperswitch-server:
+  #   image: docker.juspay.io/juspaydotin/hyperswitch-router:latest
+  #   pull_policy: always
+  #   container_name: hyperswitch-server
+  #   restart: unless-stopped
+  #   command: /local/bin/router -f /local/config/docker_compose.toml
+  #   networks:
+  #     - app_net
+  #   ports:
+  #     - "8080:8080"
+    # volumes:
+    #   - ./hyperswitch/config:/local/config
+    # depends_on:
+    #   hs_postgres:
+    #     condition: service_healthy
+    #   hs_redis:
+    #     condition: service_healthy
+    #   hs_migration_runner:
+  #       condition: service_completed_successfully
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl --fail http://localhost:8080/health || exit 1"]
+  #     interval: 5s
+  #     retries: 5
+  #     start_period: 10s
+  #     timeout: 5s
 
-  hs_migration_runner:
-    image: docker.io/debian:trixie-slim
-    pull_policy: always
-    container_name: hs_migration_runner
-    networks:
-      - app_net
-    working_dir: /app
-    command: >
-      bash -c "
-      apt-get update && apt-get install -y curl xz-utils just &&
-      curl --proto '=https' --tlsv1.2 -LsSf https://github.com/diesel-rs/diesel/releases/download/v2.3.5/diesel_cli-installer.sh | bash &&
-      export PATH=\"/root/.cargo/bin:$${PATH}\" &&
-      just migrate"
-    volumes:
-      - ./hyperswitch:/app
-    environment:
-      - DATABASE_URL=postgresql://db_user:hs_pass@db_postgres:5432/hyperswitch_db
-    depends_on:
-      hs_postgres:
-        condition: service_healthy
+  # hs_migration_runner:
+  #   image: docker.io/debian:trixie-slim
+  #   pull_policy: always
+  #   container_name: hs_migration_runner
+  #   networks:
+  #     - app_net
+  #   working_dir: /app
+  #   command: >
+  #     bash -c "
+  #     apt-get update && apt-get install -y curl xz-utils just &&
+  #     curl --proto '=https' --tlsv1.2 -LsSf https://github.com/diesel-rs/diesel/releases/download/v2.3.5/diesel_cli-installer.sh | bash &&
+  #     export PATH=\"/root/.cargo/bin:$${PATH}\" &&
+  #     just migrate"
+  #   volumes:
+  #     - ./hyperswitch:/app
+  #   environment:
+  #     - DATABASE_URL=postgresql://db_user:db_pass@hs_postgres:5432/hyperswitch_db
+  #   depends_on:
+  #     hs_postgres:
+  #       condition: service_healthy
 
   # hs_migration_runner:
   #   image: rust:latest
@@ -225,86 +250,88 @@ services:
   #     hs_postgres:
   #       condition: service_healthy
 
-  hs_postgres:
-    image: postgres:16
-    container_name: hs_postgres
-    restart: always
-    networks:
-      - app_net
-    environment:
-      - POSTGRES_USER=db_user
-      - POSTGRES_PASSWORD=db_pass
-      - POSTGRES_DB=hyperswitch_db
-    volumes:
-      - hs_postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
-      interval: 5s
-      retries: 5
-      start_period: 5s
-      timeout: 5s
+  # hs_postgres:
+  #   image: postgres:16
+  #   container_name: hs_postgres
+  #   restart: always
+  #   networks:
+  #     - app_net
+  #   environment:
+  #     - POSTGRES_USER=db_user
+  #     - POSTGRES_PASSWORD=db_pass
+  #     - POSTGRES_DB=hyperswitch_db
+  #   volumes:
+  #     - hs_postgres_data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+  #     interval: 5s
+  #     retries: 5
+  #     start_period: 5s
+  #     timeout: 5s
 
-  hs_redis:
-    image: redis:7
-    container_name: hs_redis
-    restart: unless-stopped
-    networks:
-      - app_net
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping | grep '^PONG$'"]
-      interval: 5s
-      retries: 3
-      start_period: 5s
-      timeout: 5s
+  # hs_redis:
+  #   image: redis:7
+  #   container_name: hs_redis
+  #   restart: unless-stopped
+  #   networks:
+  #     - app_net
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "redis-cli ping | grep '^PONG$'"]
+  #     interval: 5s
+  #     retries: 3
+  #     start_period: 5s
+  #     timeout: 5s
 
-  # ─────────────────────────────────────────
-  # HYPERSWITCH WEB SDK (frontend)
-  # ─────────────────────────────────────────
+  # # ─────────────────────────────────────────
+  # # HYPERSWITCH WEB SDK (frontend)
+  # # ─────────────────────────────────────────
 
-  hyperswitch-web:
-    image: docker.juspay.io/juspaydotin/hyperswitch-web:latest
-    pull_policy: always
-    container_name: hyperswitch-web
-    restart: unless-stopped
-    networks:
-      - app_net
-    ports:
-      - "9050:9050"
-    environment:
-      - ENABLE_LOGGING=true
-      - SDK_ENV=sandbox
-      - ENV_BACKEND_URL=http://hyperswitch-server:8080
-    depends_on:
-      hyperswitch-server:
-        condition: service_healthy
+  # hyperswitch-web:
+  #   image: docker.juspay.io/juspaydotin/hyperswitch-web:latest
+  #   pull_policy: always
+  #   container_name: hyperswitch-web
+  #   restart: unless-stopped
+  #   networks:
+  #     - app_net
+  #   ports:
+  #     - "9050:9050"
+  #   environment:
+  #     - ENABLE_LOGGING=true
+  #     - SDK_ENV=sandbox
+  #     - ENV_BACKEND_URL=http://hyperswitch-server:8080
+  #   depends_on:
+  #     hyperswitch-server:
+  #       condition: service_healthy
 
-  # ─────────────────────────────────────────
-  # HYPERSWITCH CONTROL CENTER
-  # ─────────────────────────────────────────
+  # # ─────────────────────────────────────────
+  # # HYPERSWITCH CONTROL CENTER
+  # # ─────────────────────────────────────────
 
-  hyperswitch-control-center:
-    image: docker.juspay.io/juspaydotin/hyperswitch-control-center:latest
-    pull_policy: always
-    container_name: hyperswitch-control-center
-    restart: unless-stopped
-    networks:
-      - app_net
-    ports:
-      - "9000:9000"
-    environment:
-      - configPath=/tmp/dashboard-config.toml
-    volumes:
-      - ./hyperswitch/config/dashboard.toml:/tmp/dashboard-config.toml
-    depends_on:
-      hyperswitch-server:
-        condition: service_healthy
+  # hyperswitch-control-center:
+  #   image: docker.juspay.io/juspaydotin/hyperswitch-control-center:latest
+  #   pull_policy: always
+  #   container_name: hyperswitch-control-center
+  #   restart: unless-stopped
+  #   networks:
+  #     - app_net
+  #   ports:
+  #     - "9000:9000"
+  #   environment:
+  #     - configPath=/tmp/dashboard-config.toml
+  #   volumes:
+  #     - ./hyperswitch/config/dashboard.toml:/tmp/dashboard-config.toml
+  #   depends_on:
+  #     hyperswitch-server:
+  #       condition: service_healthy
 
 networks:
   app_net:
     driver: bridge
+  shared_net:
+    external: true
 
 volumes:
   bk_postgres_data:
   blnk_postgres_data:
-  hs_postgres_data:
+  # hs_postgres_data:
   typesense_data:

@@ -16,16 +16,20 @@
     <div id="payment-message"></div>
 
     <!-- Load the Hyperswitch loader from CDN -->
-    <script src="http://localhost:9050/HyperLoader.js"></script>
+    <script src="https://localhost:9450/HyperLoader.js"></script>
+    <!-- <script src="script.js" type="module"></script> -->
     <script>
-      import dotenv from "dotenv";
- 
+      // import dotenv from "dotenv";
+
       let hyper;
       let unifiedCheckout;
 
       async function initialize() {
         try {
-          const resp = await fetch("http://backend:3000/create-booking", {
+          const configResp = await fetch("https://localhost:3443/config");
+          const { publishableKey } = await configResp.json();
+
+          const resp = await fetch("https://localhost:3443/create-booking", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -39,7 +43,8 @@
           console.log("RESPONSE:", data);
 
           const { bookingId, clientSecret } = data;
-          hyper = Hyper(process.env.HS_PNK_API_KEY);
+          console.log("process.env.HS_PNK_API_KEY=== ", publishableKey)
+          hyper = Hyper(publishableKey);
 
           const elements = hyper.elements({ clientSecret });
 
@@ -63,7 +68,7 @@
           },
           redirect: "always",
         });
-        
+
         if (error) {
           document.getElementById("payment-message").textContent =
             error.message || "Payment failed. Please try again.";
